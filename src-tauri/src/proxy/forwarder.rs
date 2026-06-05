@@ -1121,24 +1121,48 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
-        // 多模态降级：检测请求中的图片内容，自动切换到预配置的多模态模型
-        // 适用于 MiMo-v2.5-pro → mimo-v2.5、DeepSeek-v4-pro → deepseek-v4 等场景
+        // 多模态降级（两级）：
+        // 1. 同供应商预设降级 — provider.meta.multimodalFallbackModel（如 MiMo-v2.5-pro → mimo-v2.5）
+        // 2. 全局视觉降级 — rectifier_config.media_fallback_provider + media_fallback_model
         if super::model_mapper::request_contains_images(&mapped_body) {
-            if let Some(fallback_model) = provider
+            let current_model = mapped_body["model"].as_str().unwrap_or("").trim();
+
+            // 第一优先级：同供应商预设降级
+            let per_provider_fallback = provider
                 .meta
                 .as_ref()
-                .and_then(|m| m.multimodal_fallback_model.as_deref())
-            {
-                let original_model = mapped_body["model"].as_str().unwrap_or("?").to_string();
-                log::info!(
-                    "[ModelMapper] 检测到图片内容，降级模型: {} → {}",
-                    original_model,
-                    fallback_model
-                );
-                mapped_body["model"] = serde_json::json!(fallback_model);
+                .and_then(|m| m.multimodal_fallback_model.as_deref());
+
+            if let Some(fallback_model) = per_provider_fallback {
+                if current_model != fallback_model {
+                    log::info!(
+                        "[ModelMapper] 检测到图片内容，同供应商降级: {} → {}",
+                        current_model, fallback_model
+                    );
+                    mapped_body["model"] = serde_json::json!(fallback_model);
+                }
+            } else if let (Some(_global_pid), Some(global_model)) = (
+                self.rectifier_config.media_fallback_provider.as_deref(),
+                self.rectifier_config.media_fallback_model.as_deref(),
+            ) {
+                // 第二优先级：全局视觉降级
+                // 循环防护：当前模型已经是降级目标则跳过
+                if current_model != global_model {
+                    if _global_pid == provider.id {
+                        log::info!(
+                            "[ModelMapper] 检测到图片内容，全局降级: {} → {}",
+                            current_model, global_model
+                        );
+                    } else {
+                        log::warn!(
+                            "[ModelMapper] 检测到图片内容，全局降级目标供应商 ({}) 与当前供应商 ({}) 不同；\
+                             当前仅做模型名替换，完整跨供应商路由将在后续版本支持",
+                            _global_pid, provider.id
+                        );
+                    }
+                    mapped_body["model"] = serde_json::json!(global_model);
+                }
             }
-            // 未配置 fallback 时不干预：让请求正常发送到上游，
-            // 由上游 API 决定模型是否支持图片输入
         }
 
         if is_copilot {

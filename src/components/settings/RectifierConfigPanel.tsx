@@ -4,10 +4,27 @@ import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { providersApi } from "@/lib/api/providers";
+import type { Provider } from "@/types";
+import {
   settingsApi,
   type RectifierConfig,
   type OptimizerConfig,
 } from "@/lib/api/settings";
+
+/** 从供应商 settingsConfig 中提取 modelCatalog.models */
+function getCatalogModels(p: Provider): Array<{ model: string; displayName?: string; supportsMultimodal?: boolean }> {
+  const sc = p.settingsConfig as Record<string, any> | undefined;
+  const catalog = sc?.modelCatalog;
+  if (!catalog || !Array.isArray(catalog.models)) return [];
+  return catalog.models;
+}
 
 export function RectifierConfigPanel() {
   const { t } = useTranslation();
@@ -25,6 +42,7 @@ export function RectifierConfigPanel() {
     cacheTtl: "1h",
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [codexProviders, setCodexProviders] = useState<Provider[]>([]);
 
   useEffect(() => {
     settingsApi
@@ -36,7 +54,29 @@ export function RectifierConfigPanel() {
       .getOptimizerConfig()
       .then(setOptimizerConfig)
       .catch((e) => console.error("Failed to load optimizer config:", e));
+    // 加载所有 codex 供应商，用于全局降级模型选择
+    providersApi
+      .getAll("codex")
+      .then((map) =>
+        setCodexProviders(
+          Object.values(map).filter(
+            (p) => getCatalogModels(p).length > 0,
+          ),
+        ),
+      )
+      .catch((e) =>
+        console.warn("Failed to load codex providers for fallback:", e),
+      );
   }, []);
+
+  // 当前选中降级供应商的 catalog 中 supportsMultimodal === true 的模型
+  const fallbackMultimodalModels = config.mediaFallbackProvider
+    ? codexProviders
+        .find((p) => p.id === config.mediaFallbackProvider)
+        ?.settingsConfig?.modelCatalog?.models?.filter(
+          (m: any) => m.supportsMultimodal === true,
+        ) ?? []
+    : [];
 
   const handleChange = async (updates: Partial<RectifierConfig>) => {
     const newConfig = { ...config, ...updates };
@@ -143,6 +183,105 @@ export function RectifierConfigPanel() {
             }
           />
         </div>
+
+        {/* 全局视觉降级模型选择器 */}
+        {config.requestMediaFallback && (
+          <div className="space-y-3 rounded-lg border border-border-default bg-muted/20 p-4">
+            <div className="space-y-0.5">
+              <Label>
+                {t("settings.advanced.rectifier.mediaFallbackTarget", {
+                  defaultValue: "降级目标模型（高级·可选）",
+                })}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "settings.advanced.rectifier.mediaFallbackTargetDescription",
+                  {
+                    defaultValue:
+                      "当请求包含图片且当前模型不支持多模态时，自动切换到此模型。可选择任意供应商中标记为支持多模态的模型。",
+                  },
+                )}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {/* 降级供应商 */}
+              <Select
+                value={config.mediaFallbackProvider ?? "__none__"}
+                onValueChange={(val) =>
+                  handleChange({
+                    mediaFallbackProvider:
+                      val === "__none__" ? undefined : val,
+                    // 切换供应商时清空模型选择
+                    mediaFallbackModel: undefined,
+                  })
+                }
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue
+                    placeholder={t(
+                      "settings.advanced.rectifier.selectFallbackProvider",
+                      { defaultValue: "选择供应商" },
+                    )}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">
+                    {t("common.none", { defaultValue: "不指定" })}
+                  </SelectItem>
+                  {codexProviders.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* 降级模型（仅展示 supportsMultimodal: true） */}
+              <Select
+                value={config.mediaFallbackModel ?? "__none__"}
+                onValueChange={(val) =>
+                  handleChange({
+                    mediaFallbackModel:
+                      val === "__none__" ? undefined : val,
+                  })
+                }
+                disabled={!config.mediaFallbackProvider}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue
+                    placeholder={t(
+                      "settings.advanced.rectifier.selectFallbackModel",
+                      { defaultValue: "选择模型" },
+                    )}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">
+                    {t("common.none", { defaultValue: "不指定" })}
+                  </SelectItem>
+                  {fallbackMultimodalModels.map((m: any) => (
+                    <SelectItem key={m.model} value={m.model}>
+                      {m.displayName || m.model}
+                    </SelectItem>
+                  ))}
+                  {fallbackMultimodalModels.length === 0 &&
+                    config.mediaFallbackProvider && (
+                      <SelectItem value="__empty__" disabled>
+                        {t(
+                          "settings.advanced.rectifier.noMultimodalModels",
+                          {
+                            defaultValue:
+                              "该供应商暂无标记为支持多模态的模型",
+                          },
+                        )}
+                      </SelectItem>
+                    )}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="border-t pt-6 mt-6">

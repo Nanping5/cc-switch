@@ -223,6 +223,15 @@ fn explicit_image_support(entry: &Value) -> Option<bool> {
         return Some(value);
     }
 
+    // 检查 supportsMultimodal 字段（来自前端模型目录编辑器）
+    if let Some(supports) = entry
+        .get("supportsMultimodal")
+        .or_else(|| entry.get("supports_multimodal"))
+        .and_then(Value::as_bool)
+    {
+        return Some(supports);
+    }
+
     [
         entry.get("input"),
         entry.pointer("/modalities/input"),

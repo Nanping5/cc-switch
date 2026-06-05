@@ -371,7 +371,12 @@
         "mediaFallback": "不支持图片降级",
         "mediaFallbackDescription": "当供应商不支持图片输入时（已声明纯文本能力，或上游返回不支持图片的错误），自动将图片块替换为 [Unsupported Image] 标记，使对话不中断",
         "mediaHeuristic": "启发式纯文本模型识别",
-        "mediaHeuristicDescription": "发送前按内置模型名列表预测性剥离图片。关闭后仅保留「已声明纯文本」与「上游报错兜底」两条事实驱动路径，避免内置列表把多模态模型误判为纯文本而静默丢图"
+        "mediaHeuristicDescription": "发送前按内置模型名列表预测性剥离图片。关闭后仅保留「已声明纯文本」与「上游报错兜底」两条事实驱动路径，避免内置列表把多模态模型误判为纯文本而静默丢图",
+        "mediaFallbackTarget": "降级目标模型（高级·可选）",
+        "mediaFallbackTargetDescription": "当请求包含图片且当前模型不支持多模态时，自动切换到此模型。可选择任意供应商中标记为支持多模态的模型。",
+        "selectFallbackProvider": "选择供应商",
+        "selectFallbackModel": "选择模型",
+        "noMultimodalModels": "该供应商暂无标记为支持多模态的模型"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",
@@ -1151,6 +1156,7 @@
     "catalogColumnDisplay": "菜单显示名",
     "catalogColumnModel": "实际请求模型",
     "catalogColumnContext": "上下文窗口",
+    "catalogColumnMultimodal": "多模态",
     "reasoningModeToggle": "支持思考模式",
     "reasoningModeHint": "上游 Chat Completions 接口支持开启或关闭 thinking 时启用。Kimi、GLM、Qwen 等通常属于这一类。",
     "reasoningEffortToggle": "支持思考等级",
