@@ -515,6 +515,99 @@ impl RequestForwarder {
                     });
                 }
                 Err(e) => {
+                    // 跨供应商视觉降级：forward 返回 MediaFallbackRedirect 信号
+                    if let ProxyError::MediaFallbackRedirect {
+                        ref target_provider_id,
+                        ref target_model,
+                    } = e
+                    {
+                        // 从 providers 列表或数据库中查找目标供应商
+                        let target_from_list = providers
+                            .iter()
+                            .find(|p| p.id == *target_provider_id);
+                        let target_from_db = if target_from_list.is_some() {
+                            None
+                        } else {
+                            self.router.get_provider_by_id(target_provider_id, app_type_str)
+                        };
+                        let target_provider = target_from_list.or(target_from_db.as_ref());
+
+                        if let Some(target_provider) = target_provider {
+                            let mut fallback_body = provider_body.clone();
+                            fallback_body["model"] = serde_json::json!(target_model);
+
+                            log::info!(
+                                "[{app_type_str}] [Media] 跨供应商降级: provider {} → {}, model → {}",
+                                provider.id, target_provider_id, target_model
+                            );
+
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    target_provider,
+                                    endpoint,
+                                    &fallback_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                )
+                                .await
+                            {
+                                Ok((response, claude_api_format)) => {
+                                    log::info!(
+                                        "[{app_type_str}] [Media] 跨供应商降级成功: provider={}",
+                                        target_provider_id
+                                    );
+                                    self.record_success_result(
+                                        &target_provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+
+                                    {
+                                        let mut status = self.status.write().await;
+                                        status.success_requests += 1;
+                                        status.last_error = None;
+                                        // 注意：跨供应商降级不触发永久供应商切换
+                                        // 降级仅对当前含图片请求生效，后续请求仍使用原始供应商
+                                        if status.total_requests > 0 {
+                                            status.success_rate = (status.success_requests
+                                                as f32
+                                                / status.total_requests as f32)
+                                                * 100.0;
+                                        }
+                                    }
+
+                                    return Ok(ForwardResult {
+                                        response,
+                                        provider: provider.clone(), // 返回原始供应商，不切换
+                                        claude_api_format,
+                                        connection_guard: None,
+                                    });
+                                }
+                                Err(fallback_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [Media] 跨供应商降级失败: {}",
+                                        fallback_err
+                                    );
+                                    // 降级失败，继续原始的故障转移流程
+                                    last_error = Some(fallback_err);
+                                    last_provider = Some(target_provider.clone());
+                                    continue;
+                                }
+                            }
+                        } else {
+                            log::warn!(
+                                "[{app_type_str}] [Media] 全局降级供应商 {} 不在可用列表中，跳过降级",
+                                target_provider_id
+                            );
+                            // 目标供应商不在列表中，继续原始流程
+                            continue;
+                        }
+                    }
+
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -1141,26 +1234,31 @@ impl RequestForwarder {
                     );
                     mapped_body["model"] = serde_json::json!(fallback_model);
                 }
-            } else if let (Some(_global_pid), Some(global_model)) = (
+            } else if let (Some(global_pid), Some(global_model)) = (
                 self.rectifier_config.media_fallback_provider.as_deref(),
                 self.rectifier_config.media_fallback_model.as_deref(),
             ) {
                 // 第二优先级：全局视觉降级
-                // 循环防护：当前模型已经是降级目标则跳过
-                if current_model != global_model {
-                    if _global_pid == provider.id {
+                // 循环防护：当前模型已经是降级目标且供应商相同则跳过
+                if current_model != global_model || global_pid != provider.id {
+                    if global_pid == provider.id {
+                        // 同供应商全局降级：仅替换模型名
                         log::info!(
-                            "[ModelMapper] 检测到图片内容，全局降级: {} → {}",
+                            "[ModelMapper] 检测到图片内容，全局降级（同供应商）: {} → {}",
                             current_model, global_model
                         );
+                        mapped_body["model"] = serde_json::json!(global_model);
                     } else {
-                        log::warn!(
-                            "[ModelMapper] 检测到图片内容，全局降级目标供应商 ({}) 与当前供应商 ({}) 不同；\
-                             当前仅做模型名替换，完整跨供应商路由将在后续版本支持",
-                            _global_pid, provider.id
+                        // 跨供应商降级：返回信号，由 forward_with_retry_inner 处理
+                        log::info!(
+                            "[ModelMapper] 检测到图片内容，跨供应商全局降级: {} → provider={}, model={}",
+                            current_model, global_pid, global_model
                         );
+                        return Err(ProxyError::MediaFallbackRedirect {
+                            target_provider_id: global_pid.to_string(),
+                            target_model: global_model.to_string(),
+                        });
                     }
-                    mapped_body["model"] = serde_json::json!(global_model);
                 }
             }
         }

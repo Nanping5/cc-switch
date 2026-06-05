@@ -82,6 +82,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
                     typeof item?.context_window === "number"
                   ? item.context_window
                   : "",
+            supportsMultimodal: item?.supportsMultimodal === true,
           }))
           .filter((item: CodexCatalogModel) => item.model.trim()),
       );

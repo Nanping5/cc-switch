@@ -70,12 +70,13 @@ export function RectifierConfigPanel() {
   }, []);
 
   // 当前选中降级供应商的 catalog 中 supportsMultimodal === true 的模型
-  const fallbackMultimodalModels = config.mediaFallbackProvider
-    ? codexProviders
-        .find((p) => p.id === config.mediaFallbackProvider)
-        ?.settingsConfig?.modelCatalog?.models?.filter(
-          (m: any) => m.supportsMultimodal === true,
-        ) ?? []
+  const selectedFallbackProvider = config.mediaFallbackProvider
+    ? codexProviders.find((p) => p.id === config.mediaFallbackProvider)
+    : undefined;
+  const fallbackMultimodalModels = selectedFallbackProvider
+    ? getCatalogModels(selectedFallbackProvider).filter(
+        (m) => m.supportsMultimodal === true,
+      )
     : [];
 
   const handleChange = async (updates: Partial<RectifierConfig>) => {
@@ -260,7 +261,7 @@ export function RectifierConfigPanel() {
                   <SelectItem value="__none__">
                     {t("common.none", { defaultValue: "不指定" })}
                   </SelectItem>
-                  {fallbackMultimodalModels.map((m: any) => (
+                  {fallbackMultimodalModels.map((m) => (
                     <SelectItem key={m.model} value={m.model}>
                       {m.displayName || m.model}
                     </SelectItem>

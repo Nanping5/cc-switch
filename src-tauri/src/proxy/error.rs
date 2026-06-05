@@ -71,6 +71,16 @@ pub enum ProxyError {
     #[error("认证失败: {0}")]
     AuthError(String),
 
+    /// 跨供应商视觉降级重定向（内部信号，不应返回给客户端）
+    ///
+    /// 当请求包含图片且当前模型不支持多模态，且配置了全局降级目标供应商时，
+    /// `forward` 返回此错误，由 `forward_with_retry_inner` 捕获后用目标供应商重试。
+    #[error("媒体降级重定向: provider={target_provider_id}, model={target_model}")]
+    MediaFallbackRedirect {
+        target_provider_id: String,
+        target_model: String,
+    },
+
     #[allow(dead_code)]
     #[error("内部错误: {0}")]
     Internal(String),
@@ -154,6 +164,10 @@ impl IntoResponse for ProxyError {
                     }
                     ProxyError::AuthError(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
                     ProxyError::Internal(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+                    }
+                    // 内部信号，不应到达此处；安全兜底为 500
+                    ProxyError::MediaFallbackRedirect { .. } => {
                         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
                     }
                     ProxyError::UpstreamError { .. } => unreachable!(),
