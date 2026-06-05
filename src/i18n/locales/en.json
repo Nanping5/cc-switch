@@ -371,7 +371,12 @@
         "mediaFallback": "Unsupported Image Fallback",
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
         "mediaHeuristic": "Heuristic Text-Only Model Detection",
-        "mediaHeuristicDescription": "Predictively strips images before sending based on a built-in model-name list. When off, only the declared-text-only and upstream-error fallback paths remain, preventing the built-in list from misclassifying a multimodal model as text-only and silently dropping images"
+        "mediaHeuristicDescription": "Predictively strips images before sending based on a built-in model-name list. When off, only the declared-text-only and upstream-error fallback paths remain, preventing the built-in list from misclassifying a multimodal model as text-only and silently dropping images",
+        "mediaFallbackTarget": "Fallback Target Model (Advanced, Optional)",
+        "mediaFallbackTargetDescription": "When the request contains images and the current model does not support multimodal, automatically switch to this model. You can select any model marked as multimodal-capable from any provider.",
+        "selectFallbackProvider": "Select Provider",
+        "selectFallbackModel": "Select Model",
+        "noMultimodalModels": "This provider has no models marked as multimodal-capable"
       },
       "optimizer": {
         "title": "Bedrock Request Optimizer",
@@ -1253,6 +1258,7 @@
     "catalogColumnDisplay": "Menu Display Name",
     "catalogColumnModel": "Actual Request Model",
     "catalogColumnContext": "Context Window",
+    "catalogColumnMultimodal": "Multimodal",
     "reasoningModeToggle": "Supports Thinking Mode",
     "reasoningModeHint": "Enable when the upstream Chat Completions API supports toggling thinking on/off. Providers like Kimi, GLM and Qwen usually fall into this category.",
     "reasoningEffortToggle": "Supports Reasoning Effort",

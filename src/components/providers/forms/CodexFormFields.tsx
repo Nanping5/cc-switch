@@ -462,7 +462,7 @@ export function CodexFormFields({
           {catalogRows.length > 0 && (
             <div className="space-y-2">
               {/* 列头：md+ 显示 */}
-              <div className="hidden grid-cols-[1fr_1fr_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+              <div className="hidden grid-cols-[1fr_1fr_140px_auto_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                 <span>
                   {t("codexConfig.catalogColumnDisplay", {
                     defaultValue: "菜单显示名",
@@ -478,13 +478,18 @@ export function CodexFormFields({
                     defaultValue: "上下文窗口",
                   })}
                 </span>
+                <span>
+                  {t("codexConfig.catalogColumnMultimodal", {
+                    defaultValue: "多模态",
+                  })}
+                </span>
                 <span />
               </div>
 
               {catalogRows.map((row, index) => (
                 <div
                   key={row.rowId}
-                  className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
+                  className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_auto_36px]"
                 >
                   <Input
                     value={row.displayName ?? ""}
@@ -546,10 +551,23 @@ export function CodexFormFields({
                     placeholder={t("codexConfig.contextWindowPlaceholder", {
                       defaultValue: "例如: 128000",
                     })}
-                    aria-label={t("codexConfig.catalogColumnContext", {
-                      defaultValue: "上下文窗口",
-                    })}
-                  />
+                  aria-label={t("codexConfig.catalogColumnContext", {
+                    defaultValue: "上下文窗口",
+                  })}
+                />
+                  <div className="flex items-center justify-center">
+                    <Switch
+                      checked={row.supportsMultimodal ?? false}
+                      onCheckedChange={(checked) =>
+                        handleUpdateCatalogRow(index, {
+                          supportsMultimodal: checked,
+                        })
+                      }
+                      aria-label={t("codexConfig.catalogColumnMultimodal", {
+                        defaultValue: "多模态",
+                      })}
+                    />
+                  </div>
                   <Button
                     type="button"
                     variant="ghost"

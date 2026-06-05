@@ -371,7 +371,12 @@
         "mediaFallback": "不支援圖片降級",
         "mediaFallbackDescription": "當供應商不支援圖片輸入時（已宣告純文字能力，或上游回傳不支援圖片的錯誤），自動將圖片區塊替換為 [Unsupported Image] 標記，使對話不中斷",
         "mediaHeuristic": "啟發式純文字模型辨識",
-        "mediaHeuristicDescription": "傳送前依內建模型名稱清單預測性地移除圖片。關閉後僅保留「已宣告純文字」與「上游錯誤兜底」兩條事實驅動路徑，避免內建清單將多模態模型誤判為純文字而靜默丟失圖片"
+        "mediaHeuristicDescription": "傳送前依內建模型名稱清單預測性地移除圖片。關閉後僅保留「已宣告純文字」與「上游錯誤兜底」兩條事實驅動路徑，避免內建清單將多模態模型誤判為純文字而靜默丟失圖片",
+        "mediaFallbackTarget": "降級目標模型（進階·可選）",
+        "mediaFallbackTargetDescription": "當請求包含圖片且當前模型不支援多模態時，自動切換到此模型。可選擇任意供應商中標記為支援多模態的模型。",
+        "selectFallbackProvider": "選擇供應商",
+        "selectFallbackModel": "選擇模型",
+        "noMultimodalModels": "該供應商暫無標記為支援多模態的模型"
       },
       "optimizer": {
         "title": "Bedrock 請求最佳化工具",

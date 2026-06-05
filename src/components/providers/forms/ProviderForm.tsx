@@ -169,6 +169,7 @@ export const normalizeCodexCatalogModelsForSave = (
       model,
       ...(displayName ? { displayName } : {}),
       ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+      ...(item.supportsMultimodal ? { supportsMultimodal: true } : {}),
     });
   }
 

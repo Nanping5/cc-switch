@@ -226,6 +226,17 @@ pub struct RectifierConfig {
     /// 避免内置列表把多模态模型误判成 text-only 而静默剥图。
     #[serde(default = "default_true")]
     pub request_media_heuristic: bool,
+    /// 全局视觉降级目标供应商 ID
+    ///
+    /// 当请求包含图片且当前模型不支持多模态时，优先降级到该供应商的指定模型。
+    /// 与 `media_fallback_model` 配合使用；两者都设置时生效。
+    #[serde(rename = "mediaFallbackProvider", skip_serializing_if = "Option::is_none")]
+    pub media_fallback_provider: Option<String>,
+    /// 全局视觉降级目标模型
+    ///
+    /// 与 `media_fallback_provider` 配合使用；两者都设置时生效。
+    #[serde(rename = "mediaFallbackModel", skip_serializing_if = "Option::is_none")]
+    pub media_fallback_model: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -244,6 +255,8 @@ impl Default for RectifierConfig {
             request_thinking_budget: true,
             request_media_fallback: true,
             request_media_heuristic: true,
+            media_fallback_provider: None,
+            media_fallback_model: None,
         }
     }
 }
