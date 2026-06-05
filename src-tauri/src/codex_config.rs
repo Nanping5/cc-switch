@@ -320,6 +320,7 @@ fn codex_catalog_model_entry(
         return json!({});
     };
 
+    entry_obj.insert("model".to_string(), json!(model));
     entry_obj.insert("slug".to_string(), json!(model));
     entry_obj.insert("display_name".to_string(), json!(display_name));
     entry_obj.insert("description".to_string(), json!(display_name));
@@ -705,8 +706,57 @@ fn set_codex_model_catalog_json_field(
     Ok(doc.to_string())
 }
 
+/// Inject a `models` array into `[model_providers.<id>]` so Codex Desktop can
+/// list third-party models in the `/model` dropdown and settings UI.
+fn inject_codex_provider_models(
+    config_text: &str,
+    specs: &[CodexCatalogModelSpec],
+) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(config_text.to_string());
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return Ok(config_text.to_string());
+    }
+
+    // Ensure [model_providers] table exists
+    if doc.get("model_providers").is_none() {
+        doc["model_providers"] = toml_edit::table();
+    }
+
+    if let Some(model_providers) = doc["model_providers"].as_table_mut() {
+        if !model_providers.contains_key(&provider_id) {
+            model_providers[&provider_id] = toml_edit::table();
+        }
+        if let Some(provider_table) = model_providers[&provider_id].as_table_mut() {
+            let mut arr = toml_edit::Array::new();
+            arr.set_trailing_comma(true);
+            for spec in specs {
+                let mut tbl = toml_edit::InlineTable::new();
+                tbl.insert("model", toml_edit::Value::from(spec.model.as_str()));
+                tbl.insert(
+                    "display_name",
+                    toml_edit::Value::from(spec.display_name.as_str()),
+                );
+                arr.push(toml_edit::Value::InlineTable(tbl));
+            }
+            provider_table["models"] = toml_edit::value(arr);
+        }
+    }
+
+    Ok(doc.to_string())
+}
+
 /// Generate Codex `model_catalog_json` from provider settings and inject/remove
 /// the top-level TOML field that points Codex to the generated file.
+///
+/// Also injects a `models` array into `[model_providers.<id>]` when the active
+/// provider is a custom (non-reserved) provider so Codex Desktop can enumerate
+/// third-party models in its UI dropdown.
 pub fn prepare_codex_config_text_with_model_catalog(
     settings: &Value,
     config_text: &str,
@@ -714,8 +764,22 @@ pub fn prepare_codex_config_text_with_model_catalog(
     let catalog_path = get_codex_model_catalog_path();
 
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text)? {
-        let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
+        let mut config_text =
+            set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         write_json_file(&catalog_path, &catalog)?;
+
+        // Sync models_cache.json so Codex Desktop can discover models
+        // immediately after a provider switch (Issue #3668).
+        let models_cache_path = get_codex_config_dir().join("models_cache.json");
+        let _ = write_json_file(&models_cache_path, &catalog);
+
+        // Inject `models` array into [model_providers.<id>] so Codex Desktop
+        // UI model dropdown can discover third-party models.
+        let specs = codex_catalog_model_specs(settings, &config_text);
+        if !specs.is_empty() {
+            config_text = inject_codex_provider_models(&config_text, &specs)?;
+        }
+
         Ok(config_text)
     } else {
         set_codex_model_catalog_json_field(config_text, None)

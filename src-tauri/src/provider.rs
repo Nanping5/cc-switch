@@ -739,7 +739,11 @@ disable_response_storage = true
 name = "NewAPI"
 base_url = "{codex_base_url}"
 wire_api = "responses"
-requires_openai_auth = true"#
+requires_openai_auth = true
+
+[[model_providers.custom.models]]
+model = "{model}"
+display_name = "{model}""#
         );
 
         let settings_config = serde_json::json!({

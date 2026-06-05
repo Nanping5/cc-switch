@@ -21,7 +21,11 @@ disable_response_storage = true
 [model_providers.custom]
 name = "custom"
 wire_api = "responses"
-requires_openai_auth = true`;
+requires_openai_auth = true
+
+[[model_providers.custom.models]]
+model = "gpt-5.5"
+display_name = "GPT-5.5"`;
 
   return {
     auth: { OPENAI_API_KEY: "" },
