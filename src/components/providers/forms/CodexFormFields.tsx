@@ -82,13 +82,14 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     model: seed?.model ?? "",
     displayName: seed?.displayName ?? "",
     contextWindow: seed?.contextWindow ?? "",
+    supportsMultimodal: seed?.supportsMultimodal ?? false,
   };
 }
 
 // Compares rows (with rowId) to incoming models (without) by data fields only,
 // so both sync effects can use the same equality definition.
 function catalogRowsMatchModels(
-  rows: Array<Pick<CodexCatalogRow, "model" | "displayName" | "contextWindow">>,
+  rows: Array<Pick<CodexCatalogRow, "model" | "displayName" | "contextWindow" | "supportsMultimodal">>,
   models: CodexCatalogModel[],
 ): boolean {
   if (rows.length !== models.length) return false;
@@ -97,7 +98,8 @@ function catalogRowsMatchModels(
     return (
       row.model === (incoming.model ?? "") &&
       (row.displayName ?? "") === (incoming.displayName ?? "") &&
-      String(row.contextWindow ?? "") === String(incoming.contextWindow ?? "")
+      String(row.contextWindow ?? "") === String(incoming.contextWindow ?? "") &&
+      (row.supportsMultimodal ?? false) === (incoming.supportsMultimodal ?? false)
     );
   });
 }
@@ -551,10 +553,10 @@ export function CodexFormFields({
                     placeholder={t("codexConfig.contextWindowPlaceholder", {
                       defaultValue: "例如: 128000",
                     })}
-                  aria-label={t("codexConfig.catalogColumnContext", {
-                    defaultValue: "上下文窗口",
-                  })}
-                />
+                    aria-label={t("codexConfig.catalogColumnContext", {
+                      defaultValue: "上下文窗口",
+                    })}
+                  />
                   <div className="flex items-center justify-center">
                     <Switch
                       checked={row.supportsMultimodal ?? false}
