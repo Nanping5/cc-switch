@@ -230,7 +230,10 @@ pub struct RectifierConfig {
     ///
     /// 当请求包含图片且当前模型不支持多模态时，优先降级到该供应商的指定模型。
     /// 与 `media_fallback_model` 配合使用；两者都设置时生效。
-    #[serde(rename = "mediaFallbackProvider", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "mediaFallbackProvider",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub media_fallback_provider: Option<String>,
     /// 全局视觉降级目标模型
     ///

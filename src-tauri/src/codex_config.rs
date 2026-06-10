@@ -764,8 +764,7 @@ pub fn prepare_codex_config_text_with_model_catalog(
     let catalog_path = get_codex_model_catalog_path();
 
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text)? {
-        let mut config_text =
-            set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
+        let mut config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         write_json_file(&catalog_path, &catalog)?;
 
         // Sync models_cache.json so Codex Desktop can discover models

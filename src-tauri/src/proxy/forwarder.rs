@@ -167,6 +167,109 @@ impl RequestForwarder {
             && super::media_sanitizer::is_unsupported_image_error(error)
     }
 
+    /// Apply the three-level multimodal fallback.
+    ///
+    /// Behavior:
+    /// - No image in request → no-op
+    /// - Current model is explicitly marked `supportsMultimodal: true`
+    ///   in the provider config → no-op (the model can already handle images)
+    /// - Per-provider `multimodal_fallback_model` set and current model differs
+    ///   → swap model name in place
+    /// - Provider's catalog contains another model explicitly marked
+    ///   `supportsMultimodal: true` (excluding current) → swap to that model
+    ///   in place (stays on the same provider, no cross-provider hop)
+    /// - Global `media_fallback_provider` + `media_fallback_model` set:
+    ///   - Same provider → swap model name in place
+    ///   - Different provider → return `MediaFallbackRedirect` signal
+    fn apply_multimodal_fallback(
+        &self,
+        body: &mut Value,
+        provider: &Provider,
+    ) -> Result<(), ProxyError> {
+        if !super::model_mapper::request_contains_images(body) {
+            return Ok(());
+        }
+
+        let current_model = body["model"].as_str().unwrap_or("").trim();
+
+        // 关键修复：当前模型如果显式支持多模态，跳过全部三级降级
+        if matches!(
+            super::media_sanitizer::explicit_model_image_support(provider, current_model),
+            Some(true)
+        ) {
+            log::debug!(
+                "[ModelMapper] 当前模型 {} 显式支持多模态，跳过视觉降级",
+                current_model
+            );
+            return Ok(());
+        }
+
+        // 第一优先级：同供应商预设降级
+        let per_provider_fallback = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.multimodal_fallback_model.as_deref());
+
+        if let Some(fallback_model) = per_provider_fallback {
+            if current_model != fallback_model {
+                log::info!(
+                    "[ModelMapper] 检测到图片内容，同供应商降级: {} → {}",
+                    current_model,
+                    fallback_model
+                );
+                body["model"] = serde_json::json!(fallback_model);
+            }
+            return Ok(());
+        }
+
+        // 第二优先级：当前供应商目录中其他支持多模态的模型
+        // 当 per_provider_fallback 未设置时，优先在同供应商目录里找
+        // 候选多模态模型；避免在同供应商有可用多模态模型时跳到全局降级
+        // 供应商（跨供应商跳转开销大、可能改变认证/限速/账单归属）。
+        if let Some(candidate) =
+            super::media_sanitizer::find_first_multimodal_candidate(provider, current_model, None)
+        {
+            log::info!(
+                "[ModelMapper] 检测到图片内容，同供应商目录多模态模型: {} → {}",
+                current_model,
+                candidate
+            );
+            body["model"] = serde_json::json!(candidate);
+            return Ok(());
+        }
+
+        // 第三优先级：全局视觉降级
+        if let (Some(global_pid), Some(global_model)) = (
+            self.rectifier_config.media_fallback_provider.as_deref(),
+            self.rectifier_config.media_fallback_model.as_deref(),
+        ) {
+            // 循环防护：当前模型已经是降级目标且供应商相同则跳过
+            if current_model != global_model || global_pid != provider.id {
+                if global_pid == provider.id {
+                    // 同供应商全局降级：仅替换模型名
+                    log::info!(
+                        "[ModelMapper] 检测到图片内容，全局降级（同供应商）: {} → {}",
+                        current_model,
+                        global_model
+                    );
+                    body["model"] = serde_json::json!(global_model);
+                } else {
+                    // 跨供应商降级：返回信号，由 forward_with_retry_inner 处理
+                    log::info!(
+                        "[ModelMapper] 检测到图片内容，跨供应商全局降级: {} → provider={}, model={}",
+                        current_model, global_pid, global_model
+                    );
+                    return Err(ProxyError::MediaFallbackRedirect {
+                        target_provider_id: global_pid.to_string(),
+                        target_model: global_model.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
@@ -522,13 +625,13 @@ impl RequestForwarder {
                     } = e
                     {
                         // 从 providers 列表或数据库中查找目标供应商
-                        let target_from_list = providers
-                            .iter()
-                            .find(|p| p.id == *target_provider_id);
+                        let target_from_list =
+                            providers.iter().find(|p| p.id == *target_provider_id);
                         let target_from_db = if target_from_list.is_some() {
                             None
                         } else {
-                            self.router.get_provider_by_id(target_provider_id, app_type_str)
+                            self.router
+                                .get_provider_by_id(target_provider_id, app_type_str)
                         };
                         let target_provider = target_from_list.or(target_from_db.as_ref());
 
@@ -573,8 +676,7 @@ impl RequestForwarder {
                                         // 注意：跨供应商降级不触发永久供应商切换
                                         // 降级仅对当前含图片请求生效，后续请求仍使用原始供应商
                                         if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests
-                                                as f32
+                                            status.success_rate = (status.success_requests as f32
                                                 / status.total_requests as f32)
                                                 * 100.0;
                                         }
@@ -1214,54 +1316,7 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
-        // 多模态降级（两级）：
-        // 1. 同供应商预设降级 — provider.meta.multimodalFallbackModel（如 MiMo-v2.5-pro → mimo-v2.5）
-        // 2. 全局视觉降级 — rectifier_config.media_fallback_provider + media_fallback_model
-        if super::model_mapper::request_contains_images(&mapped_body) {
-            let current_model = mapped_body["model"].as_str().unwrap_or("").trim();
-
-            // 第一优先级：同供应商预设降级
-            let per_provider_fallback = provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.multimodal_fallback_model.as_deref());
-
-            if let Some(fallback_model) = per_provider_fallback {
-                if current_model != fallback_model {
-                    log::info!(
-                        "[ModelMapper] 检测到图片内容，同供应商降级: {} → {}",
-                        current_model, fallback_model
-                    );
-                    mapped_body["model"] = serde_json::json!(fallback_model);
-                }
-            } else if let (Some(global_pid), Some(global_model)) = (
-                self.rectifier_config.media_fallback_provider.as_deref(),
-                self.rectifier_config.media_fallback_model.as_deref(),
-            ) {
-                // 第二优先级：全局视觉降级
-                // 循环防护：当前模型已经是降级目标且供应商相同则跳过
-                if current_model != global_model || global_pid != provider.id {
-                    if global_pid == provider.id {
-                        // 同供应商全局降级：仅替换模型名
-                        log::info!(
-                            "[ModelMapper] 检测到图片内容，全局降级（同供应商）: {} → {}",
-                            current_model, global_model
-                        );
-                        mapped_body["model"] = serde_json::json!(global_model);
-                    } else {
-                        // 跨供应商降级：返回信号，由 forward_with_retry_inner 处理
-                        log::info!(
-                            "[ModelMapper] 检测到图片内容，跨供应商全局降级: {} → provider={}, model={}",
-                            current_model, global_pid, global_model
-                        );
-                        return Err(ProxyError::MediaFallbackRedirect {
-                            target_provider_id: global_pid.to_string(),
-                            target_model: global_model.to_string(),
-                        });
-                    }
-                }
-            }
-        }
+        self.apply_multimodal_fallback(&mut mapped_body, provider)?;
 
         if is_copilot {
             mapped_body =
@@ -2684,6 +2739,7 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::provider::ProviderMeta;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -3567,5 +3623,283 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    // ===== P4: 两级多模态降级：当前模型已支持多模态时跳过降级 =====
+
+    #[test]
+    fn fallback_skipped_when_current_model_explicitly_supports_multimodal_global() {
+        // 全局降级已配置，但当前模型显式标记 supportsMultimodal=true。
+        // 不应触发跨供应商重定向，也不应替换模型名。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({
+            "models": [{ "id": "gpt-5.5", "supportsMultimodal": true }]
+        }));
+        let mut body = body_with_image("gpt-5.5");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        assert!(result.is_ok(), "显式多模态模型不应触发重定向信号");
+        assert_eq!(body["model"], "gpt-5.5", "模型名不应被替换");
+    }
+
+    #[test]
+    fn fallback_skipped_when_current_model_explicitly_supports_multimodal_per_provider() {
+        // 同供应商预设降级已配置，但当前模型显式标记 supportsMultimodal=true。
+        // 不应替换为 multimodal_fallback_model。
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let mut provider = provider_with_settings(json!({
+            "models": [{ "id": "mimo-v2.5", "supportsMultimodal": true }]
+        }));
+        provider.meta = Some(ProviderMeta {
+            multimodal_fallback_model: Some("mimo-v2.5-fallback".to_string()),
+            ..Default::default()
+        });
+        let mut body = body_with_image("mimo-v2.5");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        assert!(result.is_ok());
+        assert_eq!(
+            body["model"], "mimo-v2.5",
+            "同供应商降级也不应触发（当前模型已显式支持多模态）"
+        );
+    }
+
+    #[test]
+    fn fallback_triggers_when_current_model_unknown() {
+        // 回归保护：模型无显式声明（非多模态、非 text-only）时，全局降级应照常触发。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({}));
+        let mut body = body_with_image("some-unknown-model");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        match result {
+            Err(ProxyError::MediaFallbackRedirect {
+                target_provider_id,
+                target_model,
+            }) => {
+                assert_eq!(target_provider_id, "other-provider");
+                assert_eq!(target_model, "other-model");
+            }
+            other => panic!("应返回跨供应商重定向信号，实际: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fallback_triggers_when_current_model_explicitly_text_only() {
+        // 回归保护：模型显式声明 input=["text"]（text-only）时，全局降级应照常触发。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({
+            "models": [{ "id": "deepseek-v4-pro", "input": ["text"] }]
+        }));
+        let mut body = body_with_image("deepseek-v4-pro");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        match result {
+            Err(ProxyError::MediaFallbackRedirect {
+                target_provider_id,
+                target_model,
+            }) => {
+                assert_eq!(target_provider_id, "other-provider");
+                assert_eq!(target_model, "other-model");
+            }
+            other => panic!("显式 text-only 应触发降级，实际: {other:?}"),
+        }
+    }
+
+    // ===== P5: 第三级多模态降级：同供应商目录里挑选多模态模型 =====
+
+    #[test]
+    fn catalog_autopick_picks_multimodal_model_when_current_is_text_only() {
+        // 回归保护 #1：主路径——当前模型是 text-only、目录里有支持多模态的模型时，
+        // 应在同供应商内挑选候选多模态模型，而不是直接走全局降级。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({
+            "models": [
+                { "id": "deepseek-v4-pro", "input": ["text"] },
+                { "id": "claude-sonnet-4.5", "supportsMultimodal": true }
+            ]
+        }));
+        let mut body = body_with_image("deepseek-v4-pro");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        assert!(result.is_ok(), "同供应商有候选多模态时不应跨供应商跳转");
+        assert_eq!(
+            body["model"], "claude-sonnet-4.5",
+            "应挑选目录中第一个显式多模态的模型"
+        );
+    }
+
+    #[test]
+    fn catalog_autopick_skips_current_model_even_if_marked_multimodal() {
+        // 回归保护 #2：当前模型在目录里也标了多模态（但因为某种原因被识为非多模态）
+        // 也不能被自指选回——避免无意义切换。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({
+            "models": [
+                { "id": "weird-model", "input": ["text"] },
+                { "id": "weird-model", "supportsMultimodal": true },
+                { "id": "vision-real", "supportsMultimodal": true }
+            ]
+        }));
+        let mut body = body_with_image("weird-model");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        assert!(result.is_ok());
+        assert_eq!(
+            body["model"], "vision-real",
+            "应跳过与当前模型同 id 的条目（包括自指多模态）"
+        );
+    }
+
+    #[test]
+    fn catalog_autopick_skipped_when_current_already_explicitly_multimodal() {
+        // 回归保护 #3：当前模型显式声明多模态，目录候选不应被采用。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({
+            "models": [
+                { "id": "vision-pro", "supportsMultimodal": true },
+                { "id": "vision-lite", "supportsMultimodal": true }
+            ]
+        }));
+        let mut body = body_with_image("vision-pro");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        assert!(result.is_ok(), "显式多模态模型不应触发重定向");
+        assert_eq!(body["model"], "vision-pro", "模型名不应被替换");
+    }
+
+    #[test]
+    fn catalog_autopick_falls_through_to_global_when_no_candidate() {
+        // 回归保护 #4：同供应商目录里没有候选多模态模型时，应回退到全局降级。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({
+            "models": [
+                { "id": "deepseek-v4-pro", "input": ["text"] }
+            ]
+        }));
+        let mut body = body_with_image("deepseek-v4-pro");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        match result {
+            Err(ProxyError::MediaFallbackRedirect {
+                target_provider_id,
+                target_model,
+            }) => {
+                assert_eq!(target_provider_id, "other-provider");
+                assert_eq!(target_model, "other-model");
+            }
+            other => panic!("目录无候选时应跨供应商重定向，实际: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn catalog_autopick_falls_through_to_global_when_no_catalog_at_all() {
+        // 回归保护 #5：供应商没有 modelCatalog/settings 也没有 models 字段。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({}));
+        let mut body = body_with_image("any-text-only-model");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        assert!(
+            matches!(result, Err(ProxyError::MediaFallbackRedirect { .. })),
+            "无目录时应回退到全局降级"
+        );
+    }
+
+    #[test]
+    fn explicit_multimodal_fallback_model_wins_over_catalog_autopick() {
+        // 回归保护 #6：用户显式配置的 multimodal_fallback_model 优先级高于
+        // 目录自动挑选——尊重用户的明确选择。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("other-provider".to_string()),
+            media_fallback_model: Some("other-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let mut provider = provider_with_settings(json!({
+            "models": [
+                { "id": "text-only", "input": ["text"] },
+                { "id": "catalog-vision", "supportsMultimodal": true }
+            ]
+        }));
+        provider.meta = Some(ProviderMeta {
+            multimodal_fallback_model: Some("explicit-vision".to_string()),
+            ..Default::default()
+        });
+        let mut body = body_with_image("text-only");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        assert!(result.is_ok());
+        assert_eq!(
+            body["model"], "explicit-vision",
+            "显式配置应覆盖目录自动挑选"
+        );
+    }
+
+    #[test]
+    fn catalog_autopick_stays_in_provider_when_global_targets_other_provider() {
+        // 回归保护 #7：同供应商有候选多模态时，不应被全局降级供应商"抢走"。
+        // 这是新逻辑最重要的正向收益——避免不必要的跨供应商跳转。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            media_fallback_provider: Some("global-provider".to_string()),
+            media_fallback_model: Some("global-model".to_string()),
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({
+            "models": [
+                { "id": "local-text-only", "input": ["text"] },
+                { "id": "local-vision", "supportsMultimodal": true }
+            ]
+        }));
+        let mut body = body_with_image("local-text-only");
+
+        let result = fwd.apply_multimodal_fallback(&mut body, &provider);
+
+        assert!(result.is_ok());
+        assert_eq!(
+            body["model"], "local-vision",
+            "同供应商有候选时应留在同供应商"
+        );
     }
 }

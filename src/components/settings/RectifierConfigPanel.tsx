@@ -19,7 +19,11 @@ import {
 } from "@/lib/api/settings";
 
 /** 从供应商 settingsConfig 中提取 modelCatalog.models */
-function getCatalogModels(p: Provider): Array<{ model: string; displayName?: string; supportsMultimodal?: boolean }> {
+function getCatalogModels(p: Provider): Array<{
+  model: string;
+  displayName?: string;
+  supportsMultimodal?: boolean;
+}> {
   const sc = p.settingsConfig as Record<string, any> | undefined;
   const catalog = sc?.modelCatalog;
   if (!catalog || !Array.isArray(catalog.models)) return [];
@@ -59,9 +63,7 @@ export function RectifierConfigPanel() {
       .getAll("codex")
       .then((map) =>
         setCodexProviders(
-          Object.values(map).filter(
-            (p) => getCatalogModels(p).length > 0,
-          ),
+          Object.values(map).filter((p) => getCatalogModels(p).length > 0),
         ),
       )
       .catch((e) =>
@@ -211,8 +213,7 @@ export function RectifierConfigPanel() {
                 value={config.mediaFallbackProvider ?? "__none__"}
                 onValueChange={(val) =>
                   handleChange({
-                    mediaFallbackProvider:
-                      val === "__none__" ? undefined : val,
+                    mediaFallbackProvider: val === "__none__" ? undefined : val,
                     // 切换供应商时清空模型选择
                     mediaFallbackModel: undefined,
                   })
@@ -243,8 +244,7 @@ export function RectifierConfigPanel() {
                 value={config.mediaFallbackModel ?? "__none__"}
                 onValueChange={(val) =>
                   handleChange({
-                    mediaFallbackModel:
-                      val === "__none__" ? undefined : val,
+                    mediaFallbackModel: val === "__none__" ? undefined : val,
                   })
                 }
                 disabled={!config.mediaFallbackProvider}
@@ -269,13 +269,9 @@ export function RectifierConfigPanel() {
                   {fallbackMultimodalModels.length === 0 &&
                     config.mediaFallbackProvider && (
                       <SelectItem value="__empty__" disabled>
-                        {t(
-                          "settings.advanced.rectifier.noMultimodalModels",
-                          {
-                            defaultValue:
-                              "该供应商暂无标记为支持多模态的模型",
-                          },
-                        )}
+                        {t("settings.advanced.rectifier.noMultimodalModels", {
+                          defaultValue: "该供应商暂无标记为支持多模态的模型",
+                        })}
                       </SelectItem>
                     )}
                 </SelectContent>

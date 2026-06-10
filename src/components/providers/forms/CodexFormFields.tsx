@@ -89,7 +89,12 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
 // Compares rows (with rowId) to incoming models (without) by data fields only,
 // so both sync effects can use the same equality definition.
 function catalogRowsMatchModels(
-  rows: Array<Pick<CodexCatalogRow, "model" | "displayName" | "contextWindow" | "supportsMultimodal">>,
+  rows: Array<
+    Pick<
+      CodexCatalogRow,
+      "model" | "displayName" | "contextWindow" | "supportsMultimodal"
+    >
+  >,
   models: CodexCatalogModel[],
 ): boolean {
   if (rows.length !== models.length) return false;
@@ -98,8 +103,10 @@ function catalogRowsMatchModels(
     return (
       row.model === (incoming.model ?? "") &&
       (row.displayName ?? "") === (incoming.displayName ?? "") &&
-      String(row.contextWindow ?? "") === String(incoming.contextWindow ?? "") &&
-      (row.supportsMultimodal ?? false) === (incoming.supportsMultimodal ?? false)
+      String(row.contextWindow ?? "") ===
+        String(incoming.contextWindow ?? "") &&
+      (row.supportsMultimodal ?? false) ===
+        (incoming.supportsMultimodal ?? false)
     );
   });
 }
