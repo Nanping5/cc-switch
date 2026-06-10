@@ -158,7 +158,11 @@ fn replace_images_in_content(content: &mut Value) -> usize {
     replaced
 }
 
-fn explicit_model_image_support(provider: &Provider, model: &str) -> Option<bool> {
+/// 查找 `provider` 的目录中 `model` 显式声明的图片支持情况。
+///
+/// 返回 `Some(true)` / `Some(false)` 表示显式声明（声明驱动、零猜测），
+/// `None` 表示目录中找不到该模型或条目无相关字段（不据此判断多模态能力）。
+pub fn explicit_model_image_support(provider: &Provider, model: &str) -> Option<bool> {
     let settings = &provider.settings_config;
     [
         settings
@@ -250,6 +254,84 @@ fn input_modalities_support_image(value: &Value) -> Option<bool> {
             .map(str::trim)
             .is_some_and(|item| item.eq_ignore_ascii_case("image"))
     }))
+}
+
+/// 在当前供应商目录中查找支持多模态的降级目标。
+///
+/// 用于多模态降级中间层：当 `apply_multimodal_fallback` 确认当前模型
+/// 不支持多模态之后，作为优先于全局降级的本地候选。
+///
+/// 排除规则：
+/// - 当前请求使用的模型（避免无意义切换）
+/// - `exclude` 指定的模型（通常是 `meta.multimodal_fallback_model`，
+///   上游已检查过，避免重复处理）
+///
+/// 候选按目录出现顺序返回第一个命中；调用方如果需要更智能的排序
+/// （例如优先选择带 `default` 标记的条目），请在调用前对目录排序。
+pub fn find_first_multimodal_candidate(
+    provider: &Provider,
+    current_model: &str,
+    exclude: Option<&str>,
+) -> Option<String> {
+    let settings = &provider.settings_config;
+    let sources = [
+        settings.get("modelCatalog").and_then(|catalog| catalog.get("models")),
+        settings.get("modelCatalog"),
+        settings.get("models"),
+    ];
+    sources.into_iter().flatten().find_map(|value| {
+        find_first_multimodal_candidate_in_value(value, current_model, exclude)
+    })
+}
+
+fn find_first_multimodal_candidate_in_value(
+    value: &Value,
+    current_model: &str,
+    exclude: Option<&str>,
+) -> Option<String> {
+    if let Some(models) = value.as_array() {
+        for entry in models {
+            let Some(id) = entry_model_id(entry) else {
+                continue;
+            };
+            if model_ids_match(&id, current_model) {
+                continue;
+            }
+            if let Some(excluded) = exclude {
+                if model_ids_match(&id, excluded) {
+                    continue;
+                }
+            }
+            if explicit_image_support(entry) == Some(true) {
+                return Some(id);
+            }
+        }
+        return None;
+    }
+
+    let object = value.as_object()?;
+    for (key, entry) in object {
+        if model_ids_match(key, current_model) {
+            continue;
+        }
+        if let Some(excluded) = exclude {
+            if model_ids_match(key, excluded) {
+                continue;
+            }
+        }
+        if explicit_image_support(entry) == Some(true) {
+            return Some(key.clone());
+        }
+    }
+    None
+}
+
+fn entry_model_id(entry: &Value) -> Option<String> {
+    ["id", "model", "name"]
+        .into_iter()
+        .filter_map(|field| entry.get(field).and_then(Value::as_str))
+        .map(str::to_string)
+        .next()
 }
 
 fn extract_error_text(body: &str) -> String {
@@ -708,5 +790,122 @@ mod tests {
             body["messages"][0]["content"][0]["text"],
             UNSUPPORTED_IMAGE_MARKER
         );
+    }
+
+    // ==================== find_first_multimodal_candidate 测试 ====================
+
+    #[test]
+    fn finds_first_multimodal_in_array_catalog() {
+        let provider = provider(json!({
+            "modelCatalog": {
+                "models": [
+                    { "id": "text-only", "input": ["text"] },
+                    { "id": "vision-a", "supportsMultimodal": true },
+                    { "id": "vision-b", "supportsMultimodal": true }
+                ]
+            }
+        }));
+        let candidate = find_first_multimodal_candidate(&provider, "text-only", None);
+        assert_eq!(candidate.as_deref(), Some("vision-a"));
+    }
+
+    #[test]
+    fn finds_first_multimodal_in_object_catalog() {
+        let provider = provider(json!({
+            "models": {
+                "text-only": { "input": ["text"] },
+                "vision-a": { "supportsMultimodal": true },
+                "vision-b": { "supportsMultimodal": true }
+            }
+        }));
+        let candidate = find_first_multimodal_candidate(&provider, "text-only", None);
+        assert_eq!(candidate.as_deref(), Some("vision-a"));
+    }
+
+    #[test]
+    fn skips_current_model_even_if_it_claims_multimodal() {
+        // 当前模型在目录里也标记为多模态，但仍要排除——避免无意义自指。
+        let provider = provider(json!({
+            "models": [
+                { "id": "current-vision", "supportsMultimodal": true },
+                { "id": "fallback-vision", "supportsMultimodal": true }
+            ]
+        }));
+        let candidate = find_first_multimodal_candidate(&provider, "current-vision", None);
+        assert_eq!(candidate.as_deref(), Some("fallback-vision"));
+    }
+
+    #[test]
+    fn honors_exclude_model_parameter() {
+        // 排除候选：避免和上游 multimodal_fallback_model 重复处理。
+        let provider = provider(json!({
+            "models": [
+                { "id": "vision-a", "supportsMultimodal": true },
+                { "id": "vision-b", "supportsMultimodal": true }
+            ]
+        }));
+        let candidate = find_first_multimodal_candidate(&provider, "text-only", Some("vision-a"));
+        assert_eq!(candidate.as_deref(), Some("vision-b"));
+    }
+
+    #[test]
+    fn returns_none_when_no_multimodal_candidate_exists() {
+        let provider = provider(json!({
+            "models": [
+                { "id": "text-only-a", "input": ["text"] },
+                { "id": "text-only-b", "input": ["text"] }
+            ]
+        }));
+        let candidate = find_first_multimodal_candidate(&provider, "text-only-a", None);
+        assert!(candidate.is_none());
+    }
+
+    #[test]
+    fn returns_none_when_no_catalog_at_all() {
+        let provider = provider(json!({}));
+        let candidate = find_first_multimodal_candidate(&provider, "any-model", None);
+        assert!(candidate.is_none());
+    }
+
+    #[test]
+    fn prefers_modelcatalog_models_over_top_level_models() {
+        // 三个候选源同时存在时，modelCatalog.models 优先（与 explicit_model_image_support 一致）。
+        let provider = provider(json!({
+            "modelCatalog": {
+                "models": [
+                    { "id": "catalog-vision", "supportsMultimodal": true }
+                ]
+            },
+            "models": [
+                { "id": "top-level-vision", "supportsMultimodal": true }
+            ]
+        }));
+        let candidate = find_first_multimodal_candidate(&provider, "text-only", None);
+        assert_eq!(candidate.as_deref(), Some("catalog-vision"));
+    }
+
+    #[test]
+    fn recognizes_modalities_input_image() {
+        // 通过 input_modalities 声明的多模态也应当被识别。
+        let provider = provider(json!({
+            "models": [
+                { "id": "vision-via-input", "input": ["text", "image"] }
+            ]
+        }));
+        let candidate = find_first_multimodal_candidate(&provider, "text-only", None);
+        assert_eq!(candidate.as_deref(), Some("vision-via-input"));
+    }
+
+    #[test]
+    fn skips_entries_without_id_field() {
+        // 数组里条目缺 id 字段：跳过，但不影响后续合法条目命中。
+        let provider = provider(json!({
+            "models": [
+                { "supportsMultimodal": true },
+                { "id": "vision-real", "supportsMultimodal": true }
+            ]
+        }));
+        let candidate = find_first_multimodal_candidate(&provider, "text-only", None);
+        assert_eq!(candidate.as_deref(), Some("vision-real"));
     }
 }
