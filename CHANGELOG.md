@@ -5,6 +5,27 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.17.2] - 2026-06-10
+
+### Fixed
+
+- **多模态降级的同供应商目录自动挑选**: 修复了当前模型不是显式多模态、且同供应商目录里有 `supportsMultimodal: true` 的模型时，降级链会直接跳到全局降级供应商的 bug。现在会优先在同供应商目录里挑选多模态模型，只有在没有候选时才回退到全局降级——避免了不必要的跨供应商跳转（影响认证/限速/账单归属）。
+
+## [3.17.1] - 2026-06-07
+
+### Added
+
+- **全局多模态降级模型选择器**: 新增全局多模态降级模型配置项和供应商目录中 `supportsMultimodal` 开关，支持在当前模型不支持多模态时自动降级到指定的降级模型。
+- **多模态请求智能降级**: 代理层新增多模态请求的智能模型降级逻辑，在路由到不支持图像/音频输入的模型时自动切换到支持多模态的降级模型。
+
+### Changed
+
+- **品牌重命名**: CC Switch → CC Switch Next。
+
+### Fixed
+
+- **跨供应商多模态降级**: 修复了多模态降级 + `supportsMultimodal` 持久化相关的跨供应商问题。
+
 ## [3.16.2] - 2026-06-07
 
 Development since v3.16.1 focuses on broadening data portability and usage observability — S3-compatible cloud sync, OpenCode session usage import, and an opt-in official-subscription quota template — while hardening Codex Chat Completions routing (stream truncation, `tool_choice` / custom-tool / reasoning-token edge cases, file and audio attachments, and a Codex CLI models endpoint), strengthening proxy robustness (ephemeral ports, takeover/placeholder restore, system-message normalization, clearer upstream errors, and a text-only image fallback), fixing coding-plan quota lookups (Zhipu, MiniMax) and several Windows/macOS issues, adding the CherryIN and ZenMux providers, and refreshing the user manual.
