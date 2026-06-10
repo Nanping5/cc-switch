@@ -72,7 +72,13 @@ requires_openai_auth = true`;
 
 function modelCatalog(
   models: Array<
-    string | { model: string; displayName?: string; contextWindow?: number; supportsMultimodal?: boolean }
+    | string
+    | {
+        model: string;
+        displayName?: string;
+        contextWindow?: number;
+        supportsMultimodal?: boolean;
+      }
   >,
 ): CodexCatalogModel[] {
   return models.map((entry) =>

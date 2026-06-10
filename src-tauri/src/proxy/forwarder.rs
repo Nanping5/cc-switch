@@ -214,7 +214,8 @@ impl RequestForwarder {
             if current_model != fallback_model {
                 log::info!(
                     "[ModelMapper] 检测到图片内容，同供应商降级: {} → {}",
-                    current_model, fallback_model
+                    current_model,
+                    fallback_model
                 );
                 body["model"] = serde_json::json!(fallback_model);
             }
@@ -230,7 +231,8 @@ impl RequestForwarder {
         {
             log::info!(
                 "[ModelMapper] 检测到图片内容，同供应商目录多模态模型: {} → {}",
-                current_model, candidate
+                current_model,
+                candidate
             );
             body["model"] = serde_json::json!(candidate);
             return Ok(());
@@ -247,7 +249,8 @@ impl RequestForwarder {
                     // 同供应商全局降级：仅替换模型名
                     log::info!(
                         "[ModelMapper] 检测到图片内容，全局降级（同供应商）: {} → {}",
-                        current_model, global_model
+                        current_model,
+                        global_model
                     );
                     body["model"] = serde_json::json!(global_model);
                 } else {
@@ -622,13 +625,13 @@ impl RequestForwarder {
                     } = e
                     {
                         // 从 providers 列表或数据库中查找目标供应商
-                        let target_from_list = providers
-                            .iter()
-                            .find(|p| p.id == *target_provider_id);
+                        let target_from_list =
+                            providers.iter().find(|p| p.id == *target_provider_id);
                         let target_from_db = if target_from_list.is_some() {
                             None
                         } else {
-                            self.router.get_provider_by_id(target_provider_id, app_type_str)
+                            self.router
+                                .get_provider_by_id(target_provider_id, app_type_str)
                         };
                         let target_provider = target_from_list.or(target_from_db.as_ref());
 
@@ -673,8 +676,7 @@ impl RequestForwarder {
                                         // 注意：跨供应商降级不触发永久供应商切换
                                         // 降级仅对当前含图片请求生效，后续请求仍使用原始供应商
                                         if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests
-                                                as f32
+                                            status.success_rate = (status.success_requests as f32
                                                 / status.total_requests as f32)
                                                 * 100.0;
                                         }

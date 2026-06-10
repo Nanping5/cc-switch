@@ -275,13 +275,16 @@ pub fn find_first_multimodal_candidate(
 ) -> Option<String> {
     let settings = &provider.settings_config;
     let sources = [
-        settings.get("modelCatalog").and_then(|catalog| catalog.get("models")),
+        settings
+            .get("modelCatalog")
+            .and_then(|catalog| catalog.get("models")),
         settings.get("modelCatalog"),
         settings.get("models"),
     ];
-    sources.into_iter().flatten().find_map(|value| {
-        find_first_multimodal_candidate_in_value(value, current_model, exclude)
-    })
+    sources
+        .into_iter()
+        .flatten()
+        .find_map(|value| find_first_multimodal_candidate_in_value(value, current_model, exclude))
 }
 
 fn find_first_multimodal_candidate_in_value(
