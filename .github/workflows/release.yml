@@ -21,6 +21,11 @@ jobs:
         include:
           - os: windows-2022
           - os: macos-14
+            target: aarch64-apple-darwin
+            arch: arm64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            arch: x86_64
 
     steps:
       - name: Checkout
@@ -34,10 +39,31 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Add macOS targets
+      - name: Add macOS target
         if: runner.os == 'macOS'
         run: |
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
+
+      - name: Add Linux rust target
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add ${{ matrix.target }}
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -122,11 +148,19 @@ jobs:
         timeout-minutes: 60
         run: |
           set -euo pipefail
-          pnpm tauri build --target universal-apple-darwin
+          pnpm tauri build --target ${{ matrix.target }}
 
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
         run: pnpm tauri build
+
+      - name: Build Tauri App (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          pnpm tauri build --target ${{ matrix.target }} --bundles appimage,deb
 
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
@@ -139,9 +173,7 @@ jobs:
           # Locate bundle artifacts
           TAR_GZ=""; APP_PATH=""
           for path in \
-            "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
             "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
-            "src-tauri/target/x86_64-apple-darwin/release/bundle/macos" \
             "src-tauri/target/release/bundle/macos"; do
             if [ -d "$path" ]; then
               [ -z "$TAR_GZ" ]   && TAR_GZ=$(find "$path" -maxdepth 1 -name "*.tar.gz" -type f | head -1 || true)
@@ -173,7 +205,7 @@ jobs:
           if ! command -v create-dmg &>/dev/null; then
             HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
           fi
-          NEW_DMG="CC-Switch-Next-${VERSION}-macOS.dmg"
+          NEW_DMG="CC-Switch-Next-${VERSION}-macOS-arm64.dmg"
           DMG_STAGE_DIR="$RUNNER_TEMP/dmg-stage"
           rm -rf "$DMG_STAGE_DIR"
           mkdir -p "$DMG_STAGE_DIR"
@@ -246,6 +278,42 @@ jobs:
             Write-Warning 'Portable exe not found'
           }
 
+      - name: Prepare Linux Assets
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"
+          TARGET_TRIPLE="${{ matrix.target }}"
+          case "$TARGET_TRIPLE" in
+            x86_64-unknown-linux-gnu)   PLATFORM_ARCH="x86_64" ;;
+            *) echo "Unknown target triple: $TARGET_TRIPLE" >&2; exit 1 ;;
+          esac
+          BUNDLE_ROOT="src-tauri/target/${TARGET_TRIPLE}/release/bundle"
+
+          # AppImage (Tauri updater artifact, will be matched by assemble-latest-json)
+          shopt -s nullglob
+          for appimage in "${BUNDLE_ROOT}/appimage/"*.AppImage "${BUNDLE_ROOT}/appimage/"*.appimage; do
+            new_name="CC-Switch-Next-${VERSION}-Linux-${PLATFORM_ARCH}.AppImage"
+            cp "$appimage" "release-assets/${new_name}"
+            chmod +x "release-assets/${new_name}"
+            if [ -f "${appimage}.sig" ]; then
+              cp "${appimage}.sig" "release-assets/${new_name}.sig"
+              echo "Linux AppImage (${PLATFORM_ARCH}) copied: ${new_name}"
+            else
+              echo "Warning: signature for ${appimage} not found" >&2
+            fi
+          done
+
+          # .deb (Debian / Ubuntu users; not used by updater)
+          for deb in "${BUNDLE_ROOT}/deb/"*.deb; do
+            [ -f "$deb" ] || continue
+            deb_name=$(basename "$deb")
+            new_deb="CC-Switch-Next-${VERSION}-Linux-${PLATFORM_ARCH}.deb"
+            cp "$deb" "release-assets/${new_deb}"
+            echo "Linux deb (${PLATFORM_ARCH}) copied: ${new_deb} (orig: ${deb_name})"
+          done
       - name: List prepared assets
         shell: bash
         run: |
@@ -307,8 +375,18 @@ jobs:
 
             ### 下载
 
-            - **macOS**: `CC-Switch-Next-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-Next-${{ github.ref_name }}-macOS.zip`（解压即用）
-            - **Windows**: `CC-Switch-Next-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-Next-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **macOS (Apple Silicon)**: `CC-Switch-Next-${{ github.ref_name }}-macOS-arm64.dmg`（推荐）或 `…-macOS.zip`
+            - **Windows (x86_64)**: `CC-Switch-Next-${{ github.ref_name }}-Windows.msi`（安装版）或 `…-Windows-Portable.zip`（绿色版）
+            - **Linux (x86_64)**: `CC-Switch-Next-${{ github.ref_name }}-Linux-x86_64.AppImage` 或 `…-Linux-x86_64.deb`（Debian/Elementary/Ubuntu）
+
+            > **Linux 安装提示**（Debian / Elementary / Ubuntu 系推荐用 deb）：
+            > ```bash
+            > sudo apt update
+            > sudo apt install -y libwebkit2gtk-4.1-0 libfuse2
+            > sudo dpkg -i CC-Switch-Next-${{ github.ref_name }}-Linux-x86_64.deb
+            > sudo apt -f install   # 补齐依赖（如有）
+            > ```
+            > 其他发行版用 AppImage：`chmod +x CC-Switch-Next-${{ github.ref_name }}-Linux-x86_64.AppImage && ./CC-Switch-Next-${{ github.ref_name }}-Linux-x86_64.AppImage`
 
             > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
 
@@ -352,7 +430,6 @@ jobs:
           mac_url=""; mac_sig=""
           win_url=""; win_sig=""
           linux_x64_url=""; linux_x64_sig=""
-          linux_arm64_url=""; linux_arm64_sig=""
           shopt -s nullglob
           for sig in dl/*.sig; do
             base=${sig%.sig}
@@ -363,8 +440,6 @@ jobs:
               *.tar.gz)
                 # 视为 macOS updater artifact
                 mac_url="$url"; mac_sig="$sig_content";;
-              *-Linux-arm64.AppImage|*-Linux-arm64.appimage)
-                linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
               *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
                 linux_x64_url="$url"; linux_x64_sig="$sig_content";;
               *.msi|*.exe)
@@ -381,12 +456,10 @@ jobs:
             echo '  "platforms": {'
             first=1
             if [ -n "$mac_url" ] && [ -n "$mac_sig" ]; then
-              # 为兼容 arm64 / x64，重复写入两个键，指向同一 universal 包
-              for key in darwin-aarch64 darwin-x86_64; do
-                [ $first -eq 0 ] && echo ','
-                echo "    \"$key\": {\"signature\": \"$mac_sig\", \"url\": \"$mac_url\"}"
-                first=0
-              done
+              # 仅打 Apple Silicon (aarch64)；Intel Mac 用户请自行用源码构建
+              [ $first -eq 0 ] && echo ','
+              echo "    \"darwin-aarch64\": {\"signature\": \"$mac_sig\", \"url\": \"$mac_url\"}"
+              first=0
             fi
             if [ -n "$win_url" ] && [ -n "$win_sig" ]; then
               [ $first -eq 0 ] && echo ','
@@ -396,11 +469,6 @@ jobs:
             if [ -n "$linux_x64_url" ] && [ -n "$linux_x64_sig" ]; then
               [ $first -eq 0 ] && echo ','
               echo "    \"linux-x86_64\": {\"signature\": \"$linux_x64_sig\", \"url\": \"$linux_x64_url\"}"
-              first=0
-            fi
-            if [ -n "$linux_arm64_url" ] && [ -n "$linux_arm64_sig" ]; then
-              [ $first -eq 0 ] && echo ','
-              echo "    \"linux-aarch64\": {\"signature\": \"$linux_arm64_sig\", \"url\": \"$linux_arm64_url\"}"
               first=0
             fi
             echo '  }'
