@@ -827,34 +827,25 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-6 space-y-5 shadow-sm"
       >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-8">
-          <div className="flex flex-col items-center gap-2">
-            <div className="flex items-center gap-2">
-              <img src={appIcon} alt="CC Switch Next" className="h-5 w-5" />
-              <h4 className="text-lg font-semibold text-foreground">
-                CC Switch Next
-              </h4>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="gap-1.5 bg-background/80">
-                <span className="text-muted-foreground">
-                  {t("common.version")}
-                </span>
-                {isLoadingVersion ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <span className="font-medium">{`v${displayVersion}`}</span>
-                )}
-              </Badge>
-              {isPortable && (
-                <Badge variant="secondary" className="gap-1.5">
-                  <Info className="h-3 w-3" />
-                  {t("settings.portableMode")}
+          <div className="flex items-center gap-8">
+            <div className="flex flex-col items-center gap-2">
+              <div className="flex items-center gap-2">
+                <img src={appIcon} alt="CC Switch Next" className="h-5 w-5" />
+                <h4 className="text-lg font-semibold text-foreground">
+                  CC Switch Next
+                </h4>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="gap-1.5 bg-background/80">
+                  <span className="text-muted-foreground">
+                    {t("common.version")}
+                  </span>
+                  {isLoadingVersion ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <span className="font-medium">{`v${displayVersion}`}</span>
+                  )}
                 </Badge>
-              )}
-            </div>
-          </div>
-        </div>                </Badge>
                 {isPortable && (
                   <Badge variant="secondary" className="gap-1.5">
                     <Info className="h-3 w-3" />
@@ -863,6 +854,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 )}
               </div>
             </div>
+          </div>
+          <div>
             <img
               src={fable5VerifiedBanner}
               alt="Fable 5 Verified"

@@ -230,7 +230,6 @@ fn replace_image_block_with_text_marker(block: &mut Value, text_type: &str) {
 /// 返回 `Some(true)` / `Some(false)` 表示显式声明（声明驱动、零猜测），
 /// `None` 表示目录中找不到该模型或条目无相关字段（不据此判断多模态能力）。
 pub fn explicit_model_image_support(provider: &Provider, model: &str) -> Option<bool> {
-
     let settings = &provider.settings_config;
     [
         settings

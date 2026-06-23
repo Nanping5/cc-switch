@@ -1404,7 +1404,6 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
-          : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
