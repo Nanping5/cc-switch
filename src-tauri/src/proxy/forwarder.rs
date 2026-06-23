@@ -663,7 +663,9 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format)) => {
+                                Ok((response, claude_api_format, _outbound_model)) => {
+                                    // 跨供应商降级后, 实际 outbound 模型是 target_model
+                                    let outbound_model = Some(target_model.clone());
                                     log::info!(
                                         "[{app_type_str}] [Media] 跨供应商降级成功: provider={}",
                                         target_provider_id
@@ -692,6 +694,7 @@ impl RequestForwarder {
                                         response,
                                         provider: provider.clone(), // 返回原始供应商，不切换
                                         claude_api_format,
+                                        outbound_model,
                                         connection_guard: None,
                                     });
                                 }
